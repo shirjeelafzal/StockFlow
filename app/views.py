@@ -10,16 +10,15 @@ from django.utils.dateparse import parse_datetime
 from .serializers import UserSerializer, StockDataSerializer, TransactionSerializer
 from .models import User, StockData, Transaction
 from .tasks import process_transaction 
-# Create your views here.
 
 class UserViewSet(viewsets.ViewSet):
     lookup_field = 'username'
     
     def retrieve(self, request, username=None):
-        """GET /users/{username}/"""
+        """
+        Retrieve user data, using cache if available.
+        """
         cache_key = f"user_{username}"
-        
-        # try to get user data from cache
         cached_data = cache.get(cache_key)
         if cached_data:
             return Response(json.loads(cached_data))
@@ -27,7 +26,6 @@ class UserViewSet(viewsets.ViewSet):
         try:
             user = User.objects.get(username=username)
             serializer = UserSerializer(user)
-            # cache the data
             cache.set(cache_key, json.dumps(serializer.data), timeout=3600)
             return Response(serializer.data)
         except User.DoesNotExist:
@@ -35,23 +33,19 @@ class UserViewSet(viewsets.ViewSet):
                 {"error": "User not found"}, 
                 status=status.HTTP_404_NOT_FOUND
             )
-            
-            
+    
     @swagger_auto_schema(
         request_body=UserSerializer,
-        responses={
-            201: UserSerializer(),
-            400: 'Bad Request'
-        },
+        responses={201: UserSerializer(), 400: 'Bad Request'},
         operation_description="Create a new user with username and balance"
     )
     def create(self, request):
-        """POST /users/"""
-        
-        # serialize the request body
+        """
+        Create a new user.
+        """
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
-            user = serializer.save() # save the user
+            user = serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
@@ -60,7 +54,9 @@ class StockViewSet(viewsets.ViewSet):
     lookup_field = 'ticker'
     
     def list(self, request):
-        """GET /stocks/"""
+        """
+        List all stocks, using cache if available.
+        """
         cache_key = "all_stocks"
         cached_data = cache.get(cache_key)
         
@@ -69,13 +65,13 @@ class StockViewSet(viewsets.ViewSet):
         
         stocks = StockData.objects.all()
         serializer = StockDataSerializer(stocks, many=True)
-        
-        # Cache data for 1 hour
         cache.set(cache_key, json.dumps(serializer.data), timeout=3600)
         return Response(serializer.data)
     
     def retrieve(self, request, ticker=None):
-        """GET /stocks/{ticker}/"""
+        """
+        Retrieve stock data, using cache if available.
+        """
         cache_key = f"stock_{ticker}"
         cached_data = cache.get(cache_key)
         
@@ -85,46 +81,40 @@ class StockViewSet(viewsets.ViewSet):
         try:
             stock = StockData.objects.get(ticker=ticker)
             serializer = StockDataSerializer(stock)
-            
-            # Cache data for 1 hour
             cache.set(cache_key, json.dumps(serializer.data), timeout=3600)
             return Response(serializer.data)
         except StockData.DoesNotExist:
             return Response({"error": "Stock not found"}, status=status.HTTP_404_NOT_FOUND)
     
-   
     @swagger_auto_schema(
         request_body=StockDataSerializer,
         responses={201: StockDataSerializer()}
     )
     def create(self, request):
-        """POST /stocks/"""
+        """
+        Create a new stock entry.
+        """
         serializer = StockDataSerializer(data=request.data)
-        
         if serializer.is_valid():
             serializer.save()
-            
-            # Invalidate cache for all stocks
-            cache.delete("all_stocks")
+            cache.delete("all_stocks")  # Invalidate cache for all stocks
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     
-    
-    
 class TransactionViewSet(viewsets.ViewSet):
-    lookup_field='user_id'
+    lookup_field = 'user_id'
     
     @swagger_auto_schema(
         request_body=TransactionSerializer,
         responses={201: TransactionSerializer()}
     )
     def create(self, request):
-        """POST /transactions/"""
+        """
+        Create a new transaction.
+        """
         required_fields = ["user", "ticker", "transaction_type", "transaction_volume"]
     
-        # Check for missing fields
         for field in required_fields:
             if field not in request.data:
                 return Response({"error": f"Missing required field: {field}"}, status=status.HTTP_400_BAD_REQUEST)
@@ -137,10 +127,7 @@ class TransactionViewSet(viewsets.ViewSet):
         try:
             user = User.objects.get(id=user_id)
             stock = StockData.objects.get(ticker=ticker)
-            
-            # calculate the transaction price 
-            current_price = stock.close_price
-            transaction_price = current_price * transaction_volume
+            transaction_price = stock.close_price * transaction_volume
             
             transaction = Transaction.objects.create(
                 user=user,
@@ -148,7 +135,7 @@ class TransactionViewSet(viewsets.ViewSet):
                 transaction_type=transaction_type,
                 transaction_volume=transaction_volume,
                 transaction_price=transaction_price,
-                status="pending"  # Mark transaction as pending initially
+                status="pending"
             )
 
             process_transaction.delay(transaction.id)
@@ -161,7 +148,9 @@ class TransactionViewSet(viewsets.ViewSet):
             return Response({"error": "Stock not found"}, status=status.HTTP_404_NOT_FOUND)
     
     def retrieve(self, request, user_id=None):
-        """GET /transactions/{user_id}/"""
+        """
+        Retrieve transactions for a specific user.
+        """
         transactions = Transaction.objects.filter(user_id=user_id)
         serializer = TransactionSerializer(transactions, many=True)
         return Response(serializer.data)
@@ -170,12 +159,12 @@ class TransactionViewSet(viewsets.ViewSet):
         manual_parameters=[
             openapi.Parameter(
                 'start_timestamp', openapi.IN_QUERY, 
-                description="Start timestamp (ISO 8601: YYYY-MM-DDTHH:MM:SSZ)", 
+                description="Start timestamp (ISO 8601 format)", 
                 type=openapi.TYPE_STRING, required=True
             ),
             openapi.Parameter(
                 'end_timestamp', openapi.IN_QUERY, 
-                description="End timestamp (ISO 8601: YYYY-MM-DDTHH:MM:SSZ)", 
+                description="End timestamp (ISO 8601 format)", 
                 type=openapi.TYPE_STRING, required=True
             )
         ],
@@ -183,24 +172,23 @@ class TransactionViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=['get'])
     def transactions_by_date(self, request, user_id=None, start_timestamp=None, end_timestamp=None):
-        """GET /transactions/{user_id}/{start_timestamp}/{end_timestamp}/"""
-        
+        """
+        Filter transactions by date range.
+        """
         start_timestamp = request.query_params.get("start_timestamp")
         end_timestamp = request.query_params.get("end_timestamp")
         
         if not start_timestamp or not end_timestamp:
             return Response(
-                {"error": "Both start_timestamp and end_timestamp are required. Please provide values in ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ)."},
+                {"error": "Both start_timestamp and end_timestamp are required. Use ISO 8601 format."},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        # Attempt to parse timestamps
-        start_datetime = parse_datetime(start_timestamp) if start_timestamp else None
-        end_datetime = parse_datetime(end_timestamp) if end_timestamp else None
         
-        # Validate timestamps
+        start_datetime = parse_datetime(start_timestamp)
+        end_datetime = parse_datetime(end_timestamp)
+        
         if not start_datetime or not end_datetime:
-            return Response({"error": "Invalid date format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)."}, 
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Invalid date format. Use ISO 8601."}, status=status.HTTP_400_BAD_REQUEST)
 
         transactions = Transaction.objects.filter(
             user_id=user_id, timestamp__range=[start_datetime, end_datetime]
