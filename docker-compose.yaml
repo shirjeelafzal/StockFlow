@@ -1,0 +1,58 @@
+version: '3.8'
+
+networks:
+  cgassignment_network:  # Define a custom network
+
+volumes:
+  pgdata: 
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+    networks:
+      - cgassignment_network 
+
+  db:
+    image: postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data 
+    networks:
+      - cgassignment_network 
+
+  redis:
+    image: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - cgassignment_network  # Attach to the network
+
+  celery:
+    build: .  # Use the same Dockerfile for Celery
+    command: celery -A StockFlow worker --loglevel=info
+    depends_on:
+      - redis
+      - web
+    networks:
+      - cgassignment_network  # Attach to the network
+
+  flower:
+    build: .  # Use the same Dockerfile for Flower
+    command: celery -A StockFlow flower
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - web
+    networks:
+      - cgassignment_network  # Attach to the network
